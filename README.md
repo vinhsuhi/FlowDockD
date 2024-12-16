@@ -151,7 +151,7 @@ mv pdb_2021aug02/ pdbsidechain/
 cd ../
 ```
 
-### Generating ESM2 embeddings for each protein
+### Generating ESM2 embeddings for each protein (optional, cached input data available on SharePoint)
 
 To generate the ESM2 embeddings for the protein inputs,
 first create all the corresponding FASTA files for each protein sequence
