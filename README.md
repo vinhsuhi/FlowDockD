@@ -8,7 +8,7 @@
 
 <!-- <a href="https://github.com/ashleve/lightning-hydra-template"><img alt="Template" src="https://img.shields.io/badge/-Lightning--Hydra--Template-017F2F?style=flat&logo=github&labelColor=gray"></a><br> -->
 
-<!-- [![Paper](http://img.shields.io/badge/paper-arxiv.1001.2234-B31B1B.svg)](https://www.nature.com/articles/nature14539) -->
+[![Paper](http://img.shields.io/badge/paper-arxiv.2412.10966-B31B1B.svg)](https://arxiv.org/abs/2412.10966)
 
 <!-- [![Conference](http://img.shields.io/badge/AnyConference-year-4b44ce.svg)](https://papers.nips.cc/paper/2020) -->
 
@@ -24,7 +24,7 @@ This is the official codebase of the paper
 
 **FlowDock: Geometric Flow Matching for Generative Protein-Ligand Docking and Affinity Prediction**
 
-\[[arXiv](https://arxiv.org/)\]
+\[[arXiv](https://arxiv.org/abs/2412.10966)\]
 
 <div align="center">
 
@@ -384,8 +384,12 @@ If you use the code or data associated with this package or otherwise find this 
 
 ```bibtex
 @article{morehead2024flowdock,
-  title={FlowDock: Geometric Flow Matching for Generative Protein-Ligand Docking and Affinity Prediction},
-  author={Morehead, Alex and Cheng, Jianlin},
-  year={2024}
+      title={FlowDock: Geometric Flow Matching for Generative Protein-Ligand Docking and Affinity Prediction}, 
+      author={Alex Morehead and Jianlin Cheng},
+      year={2024},
+      eprint={2412.10966},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2412.10966},
 }
 ```
