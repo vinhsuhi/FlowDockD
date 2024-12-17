@@ -384,7 +384,7 @@ If you use the code or data associated with this package or otherwise find this 
 
 ```bibtex
 @article{morehead2024flowdock,
-      title={FlowDock: Geometric Flow Matching for Generative Protein-Ligand Docking and Affinity Prediction}, 
+      title={FlowDock: Geometric Flow Matching for Generative Protein-Ligand Docking and Affinity Prediction},
       author={Alex Morehead and Jianlin Cheng},
       year={2024},
       eprint={2412.10966},
