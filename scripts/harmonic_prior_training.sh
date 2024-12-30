@@ -3,7 +3,7 @@
 #SBATCH --partition chengji-lab-gpu  # NOTE: use reserved partition `chengji-lab-gpu` to use reserved A100 or H100 GPUs
 #SBATCH --account chengji-lab  # NOTE: this must be specified to use the reserved partition above
 #SBATCH --nodes=1              # NOTE: this needs to match Lightning's `Trainer(num_nodes=...)`
-#SBATCH --gres gpu:A100:4      # request A100 GPU resource(s)
+#SBATCH --gres gpu:H100:4      # request H100 GPU resource(s)
 #SBATCH --ntasks-per-node=4    # NOTE: this needs to be `1` on SLURM clusters when using Lightning's `ddp_spawn` strategy`; otherwise, set to match Lightning's quantity of `Trainer(devices=...)`
 #SBATCH --mem=0                # NOTE: use `--mem=0` to request all memory "available" on the assigned node
 #SBATCH -t 7-00:00:00          # time limit for the job (up to 7 days: `7-00:00:00`)
