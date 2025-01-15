@@ -4,7 +4,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="FlowDock",
-    version="0.0.1",
+    version="0.0.2",
     description="Geometric Flow Matching for Generative Protein-Ligand Docking and Affinity Prediction",
     author="",
     author_email="",
