@@ -264,7 +264,7 @@ python flowdock/train.py experiment=flowdock_fm data=my_new_datamodule ckpt_path
 
 <details>
 
-To reproduce `FlowDock`'s evaluation results for structure prediction, please refer to its documentation in version 0.6.0+ of the [PoseBench](https://github.com/BioinfoMachineLearning/PoseBench/tree/0.6.0?tab=readme-ov-file#how-to-run-inference-with-flowdock) GitHub repository.
+To reproduce `FlowDock`'s evaluation results for structure prediction, please refer to its documentation in version `0.6.0-FlowDock` of the [PoseBench](https://github.com/BioinfoMachineLearning/PoseBench/tree/0.6.0-FlowDock?tab=readme-ov-file#how-to-run-inference-with-flowdock) GitHub repository.
 
 To reproduce `FlowDock`'s evaluation results for binding affinity prediction using the PDBBind dataset
 
