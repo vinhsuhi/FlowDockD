@@ -42,6 +42,7 @@ This is the official codebase of the paper
 - [How to create comparative plots of evaluation results](#how-to-create-comparative-plots-of-evaluation-results)
 - [How to predict new protein-ligand complex structures and their affinities using FlowDock](#how-to-predict-new-protein-ligand-complex-structures-using-flowdock)
 - [For developers](#for-developers)
+- [Docker](#docker)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
 - [Citing this work](#citing-this-work)
@@ -383,6 +384,25 @@ rm env.yaml # clean up temporary environment file
 ```
 
 </details>
+
+## Docker
+
+<details>
+
+Build the Docker image
+
+```bash
+docker build -t flowdock .
+```
+
+Run the Docker container
+
+```bash
+docker run --gpus all --rm --name flowdock -it flowdock /bin/bash
+```
+
+</details>
+
 
 ## Acknowledgements
 
