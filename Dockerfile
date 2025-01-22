@@ -23,12 +23,14 @@ WORKDIR /software/flowdock
 RUN git clone https://github.com/BioinfoMachineLearning/FlowDock /software/flowdock 
 
 ## Create conda environment
-RUN conda env create -f environments/flowdock_environment.yaml
+# RUN conda env create -f environments/flowdock_environment.yaml
+COPY environments/flowdock_environment_docker.yaml /software/flowdock/environments/flowdock_environment_docker.yaml
+RUN conda env create -f environments/flowdock_environment_docker.yaml
 
 ## Automatically activate conda environment
-RUN echo "source activate FlowDock" >> /etc/profile.d/conda.sh && \
+RUN echo "source activate flowdock" >> /etc/profile.d/conda.sh && \
     echo "source /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
-    echo "conda activate FlowDock" >> ~/.bashrc
+    echo "conda activate flowdock" >> ~/.bashrc
 
 
 # conda activate FlowDock  # NOTE: one still needs to use `conda` to (de)activate environments
