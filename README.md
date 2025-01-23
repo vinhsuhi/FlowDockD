@@ -395,10 +395,10 @@ Build the Docker image
 docker build --platform linux/amd64 -t flowdock .
 ```
 
-Run the Docker container
+Run the Docker container (and mount your local `checkpoints/` directory).
 
 ```bash
-docker run --gpus all --rm --name flowdock -it flowdock /bin/bash
+docker run --gpus all -v ./checkpoints:/software/flowdock/checkpoints --rm --name flowdock -it flowdock /bin/bash
 ```
 
 </details>
