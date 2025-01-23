@@ -32,11 +32,6 @@ RUN echo "source activate flowdock" >> /etc/profile.d/conda.sh && \
     echo "source /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
     echo "conda activate flowdock" >> ~/.bashrc
 
-
-# conda activate FlowDock  # NOTE: one still needs to use `conda` to (de)activate environments
-# pip3 install -e . # install local project as package
-
-
 ## Default shell and command
 SHELL ["/bin/bash", "-l", "-c"]
 CMD ["/bin/bash"]
