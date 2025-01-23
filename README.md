@@ -392,7 +392,7 @@ rm env.yaml # clean up temporary environment file
 Build the Docker image
 
 ```bash
-docker build -t flowdock .
+docker build --platform linux/amd64 -t flowdock .
 ```
 
 Run the Docker container
