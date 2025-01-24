@@ -389,16 +389,24 @@ rm env.yaml # clean up temporary environment file
 
 <details>
 
-Build the Docker image
+Given that this tool has a number of dependencies, it may be easier to run it in a Docker container.
+
+Pull from [Docker Hub](https://hub.docker.com/repository/docker/cford38/flowdock): `docker pull cford38/flowdock:latest`
+
+
+
+Alternatively, build the Docker image locally:
 
 ```bash
 docker build --platform linux/amd64 -t flowdock .
 ```
 
-Run the Docker container (and mount your local `checkpoints/` directory).
+Then, run the Docker container (and mount your local `checkpoints/` directory)
 
 ```bash
 docker run --gpus all -v ./checkpoints:/software/flowdock/checkpoints --rm --name flowdock -it flowdock /bin/bash
+
+# docker run --gpus all -v ./checkpoints:/software/flowdock/checkpoints --rm --name flowdock -it cford38/flowdock:latest /bin/bash
 ```
 
 </details>
