@@ -42,6 +42,7 @@ This is the official codebase of the paper
 - [How to create comparative plots of evaluation results](#how-to-create-comparative-plots-of-evaluation-results)
 - [How to predict new protein-ligand complex structures and their affinities using FlowDock](#how-to-predict-new-protein-ligand-complex-structures-using-flowdock)
 - [For developers](#for-developers)
+- [Docker](#docker)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
 - [Citing this work](#citing-this-work)
@@ -383,6 +384,33 @@ rm env.yaml # clean up temporary environment file
 ```
 
 </details>
+
+## Docker
+
+<details>
+
+Given that this tool has a number of dependencies, it may be easier to run it in a Docker container.
+
+Pull from [Docker Hub](https://hub.docker.com/repository/docker/cford38/flowdock): `docker pull cford38/flowdock:latest`
+
+
+
+Alternatively, build the Docker image locally:
+
+```bash
+docker build --platform linux/amd64 -t flowdock .
+```
+
+Then, run the Docker container (and mount your local `checkpoints/` directory)
+
+```bash
+docker run --gpus all -v ./checkpoints:/software/flowdock/checkpoints --rm --name flowdock -it flowdock /bin/bash
+
+# docker run --gpus all -v ./checkpoints:/software/flowdock/checkpoints --rm --name flowdock -it cford38/flowdock:latest /bin/bash
+```
+
+</details>
+
 
 ## Acknowledgements
 
