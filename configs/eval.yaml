@@ -19,6 +19,9 @@ tags: ["eval", "combined", "flowdock_fm"]
 # passing checkpoint path is necessary for evaluation
 ckpt_path: ???
 
+# seed for reproducibility
+seed: 42
+
 # model arguments
 model:
   cfg:

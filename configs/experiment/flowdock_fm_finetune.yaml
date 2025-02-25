@@ -15,10 +15,11 @@ defaults:
 
 model:
   optimizer:
-    lr: 2e-4
+    lr: 5e-5
   compile: false
+  pretrain_path: /mnt/beegfs/home/ac141281/FlowDockD/checkpoints/esmfold_prior_paper_weights.ckpt
 
-tags: ["flowdock_fm", "combined_dataset"]
+tags: ["flowdock_fm_finetune", "combined_dataset"]
 
 seed: 496
 
@@ -27,19 +28,18 @@ trainer:
   check_val_every_n_epoch: 5 # NOTE: we increase this since validation steps involve full model sampling and evaluation
   reload_dataloaders_every_n_epochs: 1
 
-
-
 data:
   batch_size: 24
 
+
 logger:
   wandb:
-    name: "FlowDock-FM"
+    name: "FlowDock-FM-Finetune"
     tags: ${tags}
     group: "FlowDock-FM"
     save_dir: "${paths.output_dir}"
     offline: False
-    id: "suhi_bl01" # pass correct id to resume experiment!
+    id: "suhi_bl01_finetune" # pass correct id to resume experiment!
     anonymous: null # enable anonymous logging
     project: "FlowDock_FM"
     log_model: False # upload lightning ckpts

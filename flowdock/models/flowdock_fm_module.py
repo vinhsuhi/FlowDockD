@@ -210,7 +210,8 @@ class FlowDockFMLitModule(LightningModule):
                 self, batch, stage, loss_mode, training=self.training
             )
         loss_fn = eval_structure_prediction_losses
-        return loss_fn(self, batch, batch_idx, self.device, stage, t_1=1.0)
+        loss = loss_fn(self, batch, batch_idx, self.device, stage, t_1=1.0)
+        return loss
 
     def on_train_start(self):
         """Lightning hook that is called when training begins."""
@@ -934,3 +935,4 @@ class FlowDockFMLitModule(LightningModule):
 
 if __name__ == "__main__":
     _ = FlowDockFMLitModule(None, None, None, None)
+

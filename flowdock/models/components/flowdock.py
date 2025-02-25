@@ -148,14 +148,14 @@ class FlowDock(torch.nn.Module):
         self.ligand_encoder = resolve_ligand_encoder(
             self.ligand_cfg, self.global_cfg, state_dict=pretrained_state_dict
         )
-        self.lig_masking_rate = self.global_cfg.max_masking_rate
+        self.lig_masking_rate = self.global_cfg.max_masking_rate # 0.0
 
         # protein structure encoder
         self.protein_encoder, res_in_projector = resolve_protein_encoder(
             self.protein_cfg, self.global_cfg, state_dict=pretrained_state_dict
         )
         # protein sequence encoder
-        if self.protein_cfg.use_esm_embedding:
+        if self.protein_cfg.use_esm_embedding: # True
             # protein sequence language model
             self.plm_adapter = res_in_projector
         else:
@@ -220,12 +220,12 @@ class FlowDock(torch.nn.Module):
 
     def freeze_pretraining_params(self):
         """Freeze pretraining parameters."""
-        if self.global_cfg.freeze_mol_encoder:
+        if self.global_cfg.freeze_mol_encoder: # True
             log.info("Freezing ligand encoder parameters.")
             self.ligand_encoder.eval()
             for p in self.ligand_encoder.parameters():
                 p.requires_grad = False
-        if self.global_cfg.freeze_protein_encoder:
+        if self.global_cfg.freeze_protein_encoder: # False
             log.info("Freezing protein encoder parameters.")
             for module in [
                 (
@@ -248,7 +248,7 @@ class FlowDock(torch.nn.Module):
                 module.eval()
                 for p in module.parameters():
                     p.requires_grad = False
-        if self.global_cfg.freeze_contact_predictor:
+        if self.global_cfg.freeze_contact_predictor: # True
             log.info("Freezing contact prediction module parameters.")
             for module in [
                 self.pl_contact_stack,
@@ -663,7 +663,7 @@ class FlowDock(torch.nn.Module):
 
         # Protein residue and residue-pair embeddings
         if "res_embedding_in" not in features:
-            if self.protein_cfg.use_esm_embedding:
+            if self.protein_cfg.use_esm_embedding: # True
                 assert (
                     self.global_cfg.single_protein_batch
                 ), "Only single protein batch is supported."
@@ -1978,7 +1978,7 @@ class FlowDock(torch.nn.Module):
         contact_prediction: bool = True,
         infer_geometry_prior: bool = False,
         score: bool = False,
-        use_template: bool = False,
+        use_template: bool = False, # True
         **kwargs: Dict[str, Any],
     ) -> Union[MODEL_BATCH, torch.Tensor]:
         """Perform a forward pass through the model.

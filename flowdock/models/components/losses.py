@@ -96,7 +96,8 @@ def compute_protein_distogram_loss(
     distogram_loss = F.cross_entropy(dgram_head(sampled_grid_features), distance_bin_idx.flatten())
     return distogram_loss
 
-
+# OFCORSE FAPE IS USED! - I would have no problem using this loss for protein! 
+# However, for Ligand, I need to think!
 def compute_fape_from_atom37(
     batch: MODEL_BATCH,
     device: Union[str, torch.device],
@@ -189,6 +190,8 @@ def compute_fape_from_atom37(
     normalized_pair_dists = (
         pair_dist_aligned / aligned_target_points.square().sum(-1).add(1e-4).sqrt()
     )
+    
+    
     if split_pl_views:
         fape_protframe = cropped_pair_dists[:, : target_bb_frames.t.shape[1]].mean((1, 2)) / 10
         fape_ligframe = cropped_pair_dists[:, target_bb_frames.t.shape[1] :].mean((1, 2)) / 10
@@ -258,13 +261,13 @@ def compute_sm_distance_geometry_loss(
 def compute_drmsd_and_clashloss(
     batch: MODEL_BATCH,
     device: Union[str, torch.device],
-    pred_prot_coords: torch.Tensor,
-    target_prot_coords: torch.Tensor,
+    pred_prot_coords: torch.Tensor, # predicted protein coordinates
+    target_prot_coords: torch.Tensor, # target protein coordinates
     atnum2vdw_uff: torch.nn.Parameter,
     cap_size: int = 4000,
-    pred_lig_coords: Optional[torch.Tensor] = None,
-    target_lig_coords: Optional[torch.Tensor] = None,
-    ligatm_types: Optional[torch.Tensor] = None,
+    pred_lig_coords: Optional[torch.Tensor] = None, # predicted ligand coordinates
+    target_lig_coords: Optional[torch.Tensor] = None, # target ligand coordinates
+    ligatm_types: Optional[torch.Tensor] = None, # ligand atom types
     binding_site: bool = False,
     pl_interface: bool = False,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
@@ -557,7 +560,7 @@ def compute_lddt_pli(
         lddt = lddt + below_threshold.mul(conserved_mask).sum((1, 2)) / conserved_mask.sum((1, 2))
     return lddt / 4
 
-
+# MAIN LOSS FUNCTION
 def eval_structure_prediction_losses(
     lit_module: LightningModule,
     batch: MODEL_BATCH,
@@ -618,7 +621,7 @@ def eval_structure_prediction_losses(
     )
     batch = lit_module.net.prepare_protein_patch_indexers(batch)
     if not batch["misc"]["protein_only"]:
-        max(metadata["num_i_per_sample"])
+        max(metadata["num_i_per_sample"]) #### ?
 
         # Evaluate the contact map
         ref_dist_mat, contact_logit_matrix = eval_true_contact_maps(
@@ -718,7 +721,7 @@ def eval_structure_prediction_losses(
         on_epoch=True,
         batch_size=batch_size,
     )
-    if lit_module.hparams.cfg.task.freeze_contact_predictor:
+    if lit_module.hparams.cfg.task.freeze_contact_predictor: # True
         # Keep the distogram prediction parameters in the computational graph but with zero gradients
         protein_distogram_loss *= 0.0
 
@@ -728,21 +731,14 @@ def eval_structure_prediction_losses(
     # Run score head and evaluate structure prediction losses
     res_atom_mask = features["res_atom_mask"].bool()
 
+
+    ############################################# SUHI: SCORE HEAD #############################################
     scores = lit_module.net.run_score_head(batch, embedding_iter_id=iter_id)
 
-    if lit_module.training:
-        # # Sigmoid scaling
-        # violation_loss_ratio = 1 / (
-        #     1
-        #     + math.exp(10 - 12 * lit_module.current_epoch / lit_module.trainer.max_epochs)
-        # )
-        # violation_loss_ratio = (lit_module.current_epoch / lit_module.trainer.max_epochs)
-        violation_loss_ratio = 1.0
-    else:
-        violation_loss_ratio = 1.0
+    violation_loss_ratio = 1.0
 
     if not batch["misc"]["protein_only"]:
-        if "binding_site_mask_clean" not in batch["features"]:
+        if "binding_site_mask_clean" not in batch["features"]: # True
             with torch.no_grad():
                 min_lig_res_dist_clean = (
                     (
@@ -758,6 +754,8 @@ def eval_structure_prediction_losses(
                     min_lig_res_dist_clean < lit_module.net.BINDING_SITE_CUTOFF
                 )
             batch["features"]["binding_site_mask_clean"] = binding_site_mask_clean
+            
+        ##### SUHI: Important parts
         coords_pred_prot = scores["final_coords_prot_atom_padded"][res_atom_mask].view(
             batch_size, -1, 3
         )
@@ -798,18 +796,18 @@ def eval_structure_prediction_losses(
             target_lig_coords=batch["features"]["sdf_coordinates"],
             lig_frame_atm_idx=lig_frame_atm_idx,
             split_pl_views=True,
-        )
+        ) # used in loss function - local structure loss
         aa_distgeom_error = compute_aa_distance_geometry_loss(
             batch,
             scores["final_coords_prot_atom_padded"],
-            batch["features"]["res_atom_positions"],
-        )
+            batch["features"]["res_atom_positions"], # distance losses
+        ) # used in loss function - structure loss
         lig_distgeom_error = compute_sm_distance_geometry_loss(
             batch,
             scores["final_coords_lig_atom"],
             batch["features"]["sdf_coordinates"],
-        )
-        glob_drmsd, _ = compute_drmsd_and_clashloss(
+        ) # used in loss function - structure loss
+        glob_drmsd, _ = compute_drmsd_and_clashloss( # used in loss function
             batch,
             device,
             scores["final_coords_prot_atom_padded"],
@@ -819,7 +817,7 @@ def eval_structure_prediction_losses(
             target_lig_coords=batch["features"]["sdf_coordinates"],
             ligatm_types=batch["features"]["atomic_numbers"].long(),
         )
-        bs_drmsd, clash_error = compute_drmsd_and_clashloss(
+        bs_drmsd, clash_error = compute_drmsd_and_clashloss( # used in loss function
             batch,
             device,
             scores["final_coords_prot_atom_padded"],
@@ -830,7 +828,7 @@ def eval_structure_prediction_losses(
             ligatm_types=batch["features"]["atomic_numbers"].long(),
             binding_site=True,
         )
-        pli_drmsd, _ = compute_drmsd_and_clashloss(
+        pli_drmsd, _ = compute_drmsd_and_clashloss( # used in loss function
             batch,
             device,
             scores["final_coords_prot_atom_padded"],
@@ -844,15 +842,15 @@ def eval_structure_prediction_losses(
         distgeom_loss = (
             aa_distgeom_error.mul(lambda_weighting) * max(metadata["num_a_per_sample"])
             + lig_distgeom_error.mul(lambda_weighting) * max(metadata["num_i_per_sample"])
-        ).mean() / max(metadata["num_a_per_sample"])
+        ).mean() / max(metadata["num_a_per_sample"]) # used in loss function
 
         fape_loss = (
             (
                 global_fape_pview
                 + global_fape_lview
                 * (
-                    lit_module.hparams.cfg.task.ligand_score_loss_weight
-                    / lit_module.hparams.cfg.task.global_score_loss_weight
+                    lit_module.hparams.cfg.task.ligand_score_loss_weight # 0.1
+                    / lit_module.hparams.cfg.task.global_score_loss_weight # 0.2
                 )
                 + normalized_fape
             )
@@ -860,23 +858,23 @@ def eval_structure_prediction_losses(
             .mean()
         )
 
-        if not lit_module.hparams.cfg.task.freeze_score_head:
+        if not lit_module.hparams.cfg.task.freeze_score_head: # True
             loss = (
                 loss
-                + fape_loss
-                * lit_module.hparams.cfg.task.global_score_loss_weight
-                * is_native_sample
+                + fape_loss # 1.03
+                * lit_module.hparams.cfg.task.global_score_loss_weight # 0.2
+                * is_native_sample # True
             )
             loss = (
                 loss
                 + glob_drmsd.mul(lambda_weighting).mean()
-                * lit_module.hparams.cfg.task.drmsd_loss_weight
+                * lit_module.hparams.cfg.task.drmsd_loss_weight # 2.0
             )
-        if use_template:
+        if use_template: # False or True (50%)
             twe_drmsd = compute_template_weighted_centroid_drmsd(
                 batch, scores["final_coords_prot_atom_padded"]
             )
-            if not lit_module.hparams.cfg.task.freeze_score_head:
+            if not lit_module.hparams.cfg.task.freeze_score_head: # True
                 loss = (
                     loss
                     + twe_drmsd.mul(lambda_weighting).mean()
@@ -894,35 +892,40 @@ def eval_structure_prediction_losses(
                 on_epoch=True,
                 batch_size=batch_size,
             )
-        if not lit_module.hparams.cfg.task.freeze_score_head:
+        if not lit_module.hparams.cfg.task.freeze_score_head: # True
             loss = (
                 loss
-                + bs_drmsd.mul(lambda_weighting).mean()
-                * lit_module.hparams.cfg.task.drmsd_loss_weight
+                + bs_drmsd.mul(lambda_weighting).mean()  # 0.468
+                * lit_module.hparams.cfg.task.drmsd_loss_weight # 2.0
             )
+            
             loss = (
                 loss
-                + pli_drmsd.mul(lambda_weighting).mean()
-                * lit_module.hparams.cfg.task.drmsd_loss_weight
+                + pli_drmsd.mul(lambda_weighting).mean() # 3.480
+                * lit_module.hparams.cfg.task.drmsd_loss_weight # 2.0
             )
 
             loss = (
                 loss
-                + distgeom_loss
-                * lit_module.hparams.cfg.task.local_distgeom_loss_weight
-                * violation_loss_ratio
+                + distgeom_loss # 0.095
+                * lit_module.hparams.cfg.task.local_distgeom_loss_weight # 10.0
+                * violation_loss_ratio # 1.0
             )
             loss = (
                 loss
-                + clash_error.mul(lambda_weighting).mean()
-                * lit_module.hparams.cfg.task.clash_loss_weight
-                * violation_loss_ratio
+                + clash_error.mul(lambda_weighting).mean() # 0.142
+                * lit_module.hparams.cfg.task.clash_loss_weight # 10.0
+                * violation_loss_ratio # 1.0
             )
-        if not lit_module.hparams.cfg.task.freeze_contact_predictor:
+        if not lit_module.hparams.cfg.task.freeze_contact_predictor: # False
             loss = (0.1 + 0.9 * prior_training) * cont_loss + (1 - prior_training * 0.99) * loss
             loss = (
                 loss + protein_distogram_loss * lit_module.hparams.cfg.task.distogram_loss_weight
             )
+        
+        
+        ######################### SUHI: END OF IMPORTANT PARTS #########################
+        
         with torch.no_grad():
             tm_lbound = compute_TMscore_lbound(
                 batch,

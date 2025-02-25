@@ -2,7 +2,7 @@ _target_: flowdock.data.combined_datamodule.CombinedDataModule
 data_dir: ${paths.data_dir}
 train_datasets: ["pdbbind", "moad"] # NOTE: must be any non-empty combination of `("pdbbind", "moad", "pdbsidechain")`
 test_datasets: ["pdbbind", "moad"] # NOTE: must be any non-empty combination of `("pdbbind", "moad")`
-batch_size: 16 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
+batch_size: 24 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
 num_workers: 4
 pin_memory: True
 # overfitting arguments

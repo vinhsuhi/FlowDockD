@@ -1,4 +1,3 @@
-name: FlowDock
 channels:
   - pyg
   - iopath

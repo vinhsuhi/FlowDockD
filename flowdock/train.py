@@ -107,6 +107,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
                 else None
             )
 
+
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = (
         hydra.utils.instantiate(
@@ -147,6 +148,12 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             log.warning(
                 "`ckpt_path` was given, but the path does not exist. Training with new model weights."
             )
+        if ckpt_path is None:
+            # check if we have pre-trained weights
+            if cfg.model.get("pretrain_path"):
+                pretrained_path = cfg.model.get("pretrain_path")
+                log.info("Loading pre-trained weights!")
+                model.load_state_dict(torch.load(pretrained_path))
         trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
 
     train_metrics = trainer.callback_metrics

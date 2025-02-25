@@ -56,6 +56,11 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     assert cfg.ckpt_path, "Please provide a checkpoint path to evaluate!"
     assert os.path.exists(cfg.ckpt_path), f"Checkpoint path {cfg.ckpt_path} does not exist!"
 
+
+    # set seed for random number generators in pytorch, numpy and python.random
+    if cfg.get("seed"):
+        L.seed_everything(cfg.seed, workers=True)
+
     log.info(
         f"Setting `float32_matmul_precision` to {cfg.model.cfg.task.float32_matmul_precision}."
     )

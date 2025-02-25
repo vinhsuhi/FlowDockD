@@ -19,6 +19,9 @@ tags: ["sample", "combined", "flowdock_fm"]
 # passing checkpoint path is necessary for sampling
 ckpt_path: ???
 
+# seed for reproducibility
+seed: 42
+
 # sampling arguments
 sampling_task: batched_structure_sampling # NOTE: must be one of (`batched_structure_sampling`)
 sample_id: null # optional identifier for the sampling run

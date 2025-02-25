@@ -21,6 +21,8 @@ scheduler:
 # compile model for faster training with pytorch 2.0
 compile: false
 
+pretrain_path: null
+
 # model arguments
 cfg:
   mol_encoder:

@@ -82,7 +82,7 @@ class PDBBindDataset(Dataset):
         self.include_miscellaneous_atoms = include_miscellaneous_atoms
         self.max_lig_size = max_lig_size
         self.split_path = split_path
-        self.limit_complexes = limit_complexes
+        self.limit_complexes = limit_complexes # 0
         self.num_workers = num_workers
         self.remove_hs = remove_hs
         self.esm_embeddings_path = esm_embeddings_path
@@ -188,6 +188,7 @@ class PDBBindDataset(Dataset):
                         new_rdkit_ligands.append(self.rdkit_ligands[complex_id])
                 self.complex_graphs = new_complex_graphs
                 self.rdkit_ligands = new_rdkit_ligands
+                
 
         list_names = [complex_obj["metadata"]["sample_ID"] for complex_obj in self.complex_graphs]
         log.info(
