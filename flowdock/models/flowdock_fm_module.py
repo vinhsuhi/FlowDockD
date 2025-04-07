@@ -19,6 +19,7 @@ rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 from flowdock.models.components.losses import (
     eval_auxiliary_estimation_losses,
     eval_structure_prediction_losses,
+    simple_structure_loss,
 )
 from flowdock.utils import RankedLogger
 from flowdock.utils.data_utils import pdb_filepath_to_protein, prepare_batch
@@ -101,7 +102,7 @@ class FlowDockFMLitModule(LightningModule):
 
         # the model along with its hyperparameters
         self.net = net(cfg)
-
+        self.cfg = cfg
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False, ignore=["net"])
@@ -205,12 +206,19 @@ class FlowDockFMLitModule(LightningModule):
             and loss_mode is not None
             and "auxiliary_estimation" in loss_mode
         )
-        if should_eval_aux_loss or eval_aux_loss_mode_requested:
+        
+        to_auxi = should_eval_aux_loss or eval_aux_loss_mode_requested
+        # print(f"to_auxi: {to_auxi}, {should_eval_aux_loss}, {eval_aux_loss_mode_requested}")
+        if to_auxi and not self.hparams.cfg.simplify:
             return eval_auxiliary_estimation_losses(
                 self, batch, stage, loss_mode, training=self.training
             )
-        loss_fn = eval_structure_prediction_losses
-        loss = loss_fn(self, batch, batch_idx, self.device, stage, t_1=1.0)
+            
+        if self.hparams.cfg.simplify:
+            loss = simple_structure_loss(self, batch, batch_idx, self.device, stage, t_1=1.0, temperature=self.cfg.temperature)
+            return loss
+        
+        loss = eval_structure_prediction_losses(self, batch, batch_idx, self.device, stage, t_1=1.0)
         return loss
 
     def on_train_start(self):
@@ -236,7 +244,7 @@ class FlowDockFMLitModule(LightningModule):
             log.error(
                 f"Failed to perform training step for batch index {batch_idx} due to: {e}. Skipping example."
             )
-            return None
+            return torch.tensor(0.0, device=self.device, requires_grad=True)
 
         if self.hparams.cfg.affinity.enabled and "affinity_logits" in batch["outputs"]:
             training_outputs = {
@@ -244,7 +252,7 @@ class FlowDockFMLitModule(LightningModule):
                 "affinity": batch["features"]["affinity"],
             }
             self.training_step_outputs.append(training_outputs)
-
+        
         # return loss or backpropagation will fail
         return batch["outputs"]["loss"]
 
@@ -312,7 +320,91 @@ class FlowDockFMLitModule(LightningModule):
             os.path.join(self.trainer.default_root_dir, "validation_epoch_outputs"), exist_ok=True
         )
 
+
+    def validation_step_simple(self, batch: MODEL_BATCH, batch_idx: int, dataloader_idx: int = 0):
+        """Perform a single validation step on a batch of data from the validation set.
+
+        :param batch: A batch dictionary.
+        :param batch_idx: The index of the current batch.
+        :param dataloader_idx: The index of the current dataloader.
+        """
+        if self.hparams.cfg.task.overfitting_example_name is not None and not all(
+            name == self.hparams.cfg.task.overfitting_example_name
+            for name in batch["metadata"]["sample_ID_per_sample"]
+        ):
+            return None
+
+        try:
+            prepare_batch(batch)
+            sampling_stats = self.net.sample_pl_complex_structures(
+                batch,
+                sampler="VDODE",
+                sampler_eta=1.0,
+                num_steps=10,
+                start_time=1.0,
+                exact_prior=False,
+                return_all_states=True,
+                eval_input_protein=True,
+            )
+            all_frames = sampling_stats["all_frames"]
+            del sampling_stats["all_frames"]
+            for metric_name in sampling_stats.keys():
+                log_stat = sampling_stats[metric_name].mean().detach()
+                batch_size = sampling_stats[metric_name].shape[0]
+                self.log(
+                    f"val_sampling/{metric_name}",
+                    log_stat,
+                    on_step=True,
+                    on_epoch=True,
+                    batch_size=batch_size,
+                )    
+            batch = self.model_step(batch, batch_idx, "val")
+        except Exception as e:
+            log.error(
+                f"Failed to perform validation step for batch index {batch_idx} of dataloader {dataloader_idx} due to: {e}. Skipping example."
+            )
+            return None
+
+        # store model outputs for inspection
+        validation_outputs = {}
+        if self.hparams.cfg.task.visualize_generated_samples:
+            validation_outputs = {
+                "name": batch["metadata"]["sample_ID_per_sample"],
+                "batch_size": batch["metadata"]["num_structid"],
+                "aatype": batch["features"]["res_type"].long().cpu().numpy(),
+                "res_atom_mask": batch["features"]["res_atom_mask"].cpu().numpy(),
+                "protein_coordinates_list": [
+                    frame["receptor_padded"].cpu().numpy() for frame in all_frames
+                ],
+                "ligand_coordinates_list": [
+                    frame["ligands"].cpu().numpy() for frame in all_frames
+                ],
+                "ligand_mol": batch["metadata"]["mol_per_sample"],
+                "protein_batch_indexer": batch["indexer"]["gather_idx_a_structid"].cpu().numpy(),
+                "ligand_batch_indexer": batch["indexer"]["gather_idx_i_structid"].cpu().numpy(),
+                "gt_protein_coordinates": batch["features"]["res_atom_positions"].cpu().numpy(),
+                "gt_ligand_coordinates": batch["features"]["sdf_coordinates"].cpu().numpy(),
+                "dataloader_idx": dataloader_idx,
+            }
+        if self.hparams.cfg.affinity.enabled and "affinity_logits" in batch["outputs"]:
+            validation_outputs.update(
+                {
+                    "affinity_logits": batch["outputs"]["affinity_logits"],
+                    "affinity": batch["features"]["affinity"],
+                    "dataloader_idx": dataloader_idx,
+                }
+            )
+        if validation_outputs:
+            self.validation_step_outputs.append(validation_outputs)
+
+
     def validation_step(self, batch: MODEL_BATCH, batch_idx: int, dataloader_idx: int = 0):
+        if self.hparams.cfg.simplify:
+            self.validation_step_simple(batch, batch_idx, dataloader_idx)
+        else:
+            self.validation_step_complex(batch, batch_idx, dataloader_idx)
+
+    def validation_step_complex(self, batch: MODEL_BATCH, batch_idx: int, dataloader_idx: int = 0):
         """Perform a single validation step on a batch of data from the validation set.
 
         :param batch: A batch dictionary.
@@ -515,110 +607,16 @@ class FlowDockFMLitModule(LightningModule):
         ):
             return None
 
-        try:
-            prepare_batch(batch)
-            if self.hparams.cfg.task.eval_structure_prediction:
-                sampling_stats = self.net.sample_pl_complex_structures(
-                    batch,
-                    sampler=self.hparams.cfg.task.sampler,
-                    sampler_eta=self.hparams.cfg.task.sampler_eta,
-                    num_steps=self.hparams.cfg.task.num_steps,
-                    start_time=self.hparams.cfg.task.start_time,
-                    exact_prior=False,
-                    return_all_states=True,
-                    eval_input_protein=True,
-                )
-                all_frames = sampling_stats["all_frames"]
-                del sampling_stats["all_frames"]
-                for metric_name in sampling_stats.keys():
-                    log_stat = sampling_stats[metric_name].mean().detach()
-                    batch_size = sampling_stats[metric_name].shape[0]
-                    self.log(
-                        f"test_sampling/{metric_name}",
-                        log_stat,
-                        on_step=True,
-                        on_epoch=True,
-                        batch_size=batch_size,
-                    )
-                sampling_stats = self.net.sample_pl_complex_structures(
-                    batch,
-                    sampler=self.hparams.cfg.task.sampler,
-                    sampler_eta=self.hparams.cfg.task.sampler_eta,
-                    num_steps=self.hparams.cfg.task.num_steps,
-                    start_time=self.hparams.cfg.task.start_time,
-                    exact_prior=False,
-                    use_template=False,
-                )
-                for metric_name in sampling_stats.keys():
-                    log_stat = sampling_stats[metric_name].mean().detach()
-                    batch_size = sampling_stats[metric_name].shape[0]
-                    self.log(
-                        f"test_sampling_notemplate/{metric_name}",
-                        log_stat,
-                        on_step=True,
-                        on_epoch=True,
-                        batch_size=batch_size,
-                    )
-                sampling_stats = self.net.sample_pl_complex_structures(
-                    batch,
-                    sampler=self.hparams.cfg.task.sampler,
-                    sampler_eta=self.hparams.cfg.task.sampler_eta,
-                    num_steps=self.hparams.cfg.task.num_steps,
-                    start_time=self.hparams.cfg.task.start_time,
-                    return_summary_stats=True,
-                    exact_prior=True,
-                )
-                for metric_name in sampling_stats.keys():
-                    log_stat = sampling_stats[metric_name].mean().detach()
-                    batch_size = sampling_stats[metric_name].shape[0]
-                    self.log(
-                        f"test_sampling_trueprior/{metric_name}",
-                        log_stat,
-                        on_step=True,
-                        on_epoch=True,
-                        batch_size=batch_size,
-                    )
-            batch = self.model_step(
-                batch, batch_idx, "test", loss_mode=self.hparams.cfg.task.loss_mode
-            )
-        except Exception as e:
-            log.error(
-                f"Failed to perform test step for {batch['metadata']['sample_ID_per_sample']} with batch index {batch_idx} of dataloader {dataloader_idx} due to: {e}."
-            )
-            raise e
+        # try:
+        batch = self.model_step(batch, batch_idx, "test", loss_mode=self.hparams.cfg.task.loss_mode)
+        # except Exception as e:
+        #     log.error(
+        #         f"Failed to perform test step for {batch['metadata']['sample_ID_per_sample']} with batch index {batch_idx} of dataloader {dataloader_idx} due to: {e}."
+        #     )
+        #     raise e
 
         # store model outputs for inspection
         test_outputs = {}
-        if (
-            self.hparams.cfg.task.visualize_generated_samples
-            and self.hparams.cfg.task.eval_structure_prediction
-        ):
-            test_outputs.update(
-                {
-                    "name": batch["metadata"]["sample_ID_per_sample"],
-                    "batch_size": batch["metadata"]["num_structid"],
-                    "aatype": batch["features"]["res_type"].long().cpu().numpy(),
-                    "res_atom_mask": batch["features"]["res_atom_mask"].cpu().numpy(),
-                    "protein_coordinates_list": [
-                        frame["receptor_padded"].cpu().numpy() for frame in all_frames
-                    ],
-                    "ligand_coordinates_list": [
-                        frame["ligands"].cpu().numpy() for frame in all_frames
-                    ],
-                    "ligand_mol": batch["metadata"]["mol_per_sample"],
-                    "protein_batch_indexer": batch["indexer"]["gather_idx_a_structid"]
-                    .cpu()
-                    .numpy(),
-                    "ligand_batch_indexer": batch["indexer"]["gather_idx_i_structid"]
-                    .cpu()
-                    .numpy(),
-                    "gt_protein_coordinates": batch["features"]["res_atom_positions"]
-                    .cpu()
-                    .numpy(),
-                    "gt_ligand_coordinates": batch["features"]["sdf_coordinates"].cpu().numpy(),
-                    "dataloader_idx": dataloader_idx,
-                }
-            )
         if self.hparams.cfg.affinity.enabled and "affinity_logits" in batch["outputs"]:
             test_outputs.update(
                 {
@@ -632,24 +630,7 @@ class FlowDockFMLitModule(LightningModule):
 
     def on_test_epoch_end(self):
         """Lightning hook that is called when a test epoch ends."""
-        if (
-            self.hparams.cfg.task.visualize_generated_samples
-            and self.hparams.cfg.task.eval_structure_prediction
-        ):
-            for i, outputs in enumerate(self.test_step_outputs):
-                for batch_index in range(outputs["batch_size"]):
-                    prot_lig_pairs = construct_prot_lig_pairs(outputs, batch_index)
-                    write_prot_lig_pairs_to_pdb_file(
-                        prot_lig_pairs,
-                        os.path.join(
-                            self.trainer.default_root_dir,
-                            "test_epoch_outputs",
-                            f"{outputs['name'][batch_index]}_test_epoch_{self.current_epoch}_global_step_{self.global_step}_output_{i}_batch_{batch_index}_dataloader_{outputs['dataloader_idx']}.pdb",
-                        ),
-                    )
-        if self.hparams.cfg.affinity.enabled and any(
-            "affinity_logits" in output for output in self.test_step_outputs
-        ):
+        if self.hparams.cfg.affinity.enabled and any("affinity_logits" in output for output in self.test_step_outputs):
             affinity_logits = torch.cat(
                 [
                     output["affinity_logits"]
@@ -804,49 +785,47 @@ class FlowDockFMLitModule(LightningModule):
             auxiliary_estimation_only=self.hparams.cfg.task.auxiliary_estimation_only,
         )
         # store model outputs for inspection
-        if self.hparams.cfg.task.visualize_generated_samples:
-            predict_outputs = {
-                "name": batch_all["metadata"]["sample_ID_per_sample"],
-                "batch_size": batch_all["metadata"]["num_structid"],
-                "aatype": batch_all["features"]["res_type"].long().cpu().numpy(),
-                "res_atom_mask": batch_all["features"]["res_atom_mask"].cpu().numpy(),
-                "protein_coordinates_list": [
-                    frame["receptor_padded"].cpu().numpy() for frame in all_frames
-                ],
-                "ligand_coordinates_list": [
-                    frame["ligands"].cpu().numpy() for frame in all_frames
-                ],
-                "ligand_mol": batch_all["metadata"]["mol_per_sample"],
-                "protein_batch_indexer": batch_all["indexer"]["gather_idx_a_structid"]
-                .cpu()
-                .numpy(),
-                "ligand_batch_indexer": batch_all["indexer"]["gather_idx_i_structid"]
-                .cpu()
-                .numpy(),
-                "b_factors": b_factors,
-                "plddt_rankings": plddt_rankings,
-            }
-            self.predict_step_outputs.append(predict_outputs)
+        predict_outputs = {
+            "name": batch_all["metadata"]["sample_ID_per_sample"],
+            "batch_size": batch_all["metadata"]["num_structid"],
+            "aatype": batch_all["features"]["res_type"].long().cpu().numpy(),
+            "res_atom_mask": batch_all["features"]["res_atom_mask"].cpu().numpy(),
+            "protein_coordinates_list": [
+                frame["receptor_padded"].cpu().numpy() for frame in all_frames
+            ],
+            "ligand_coordinates_list": [
+                frame["ligands"].cpu().numpy() for frame in all_frames
+            ],
+            "ligand_mol": batch_all["metadata"]["mol_per_sample"],
+            "protein_batch_indexer": batch_all["indexer"]["gather_idx_a_structid"]
+            .cpu()
+            .numpy(),
+            "ligand_batch_indexer": batch_all["indexer"]["gather_idx_i_structid"]
+            .cpu()
+            .numpy(),
+            "b_factors": b_factors,
+            "plddt_rankings": plddt_rankings,
+        }
+        self.predict_step_outputs.append(predict_outputs)
 
     def on_predict_epoch_end(self):
         """Lightning hook that is called when a predict epoch ends."""
-        if self.hparams.cfg.task.visualize_generated_samples:
-            for i, outputs in enumerate(self.predict_step_outputs):
-                for batch_index in range(outputs["batch_size"]):
-                    prot_lig_pairs = construct_prot_lig_pairs(outputs, batch_index)
-                    ranking = (
-                        outputs["plddt_rankings"][batch_index]
-                        if "plddt_rankings" in outputs
-                        else None
-                    )
-                    write_prot_lig_pairs_to_pdb_file(
-                        prot_lig_pairs,
-                        os.path.join(
-                            self.hparams.cfg.out_path,
-                            "predict_epoch_outputs",
-                            f"{outputs['name'][batch_index]}{f'_rank{ranking + 1}' if ranking is not None else ''}_predict_epoch_{self.current_epoch}_global_step_{self.global_step}_output_{i}_batch_{batch_index}.pdb",
-                        ),
-                    )
+        for i, outputs in enumerate(self.predict_step_outputs):
+            for batch_index in range(outputs["batch_size"]):
+                prot_lig_pairs = construct_prot_lig_pairs(outputs, batch_index)
+                ranking = (
+                    outputs["plddt_rankings"][batch_index]
+                    if "plddt_rankings" in outputs
+                    else None
+                )
+                write_prot_lig_pairs_to_pdb_file(
+                    prot_lig_pairs,
+                    os.path.join(
+                        self.hparams.cfg.out_path,
+                        "predict_epoch_outputs",
+                        f"{outputs['name'][batch_index]}{f'_rank{ranking + 1}' if ranking is not None else ''}_predict_epoch_{self.current_epoch}_global_step_{self.global_step}_output_{i}_batch_{batch_index}.pdb",
+                    ),
+                )
         self.predict_step_outputs.clear()  # free memory
 
     def on_after_backward(self):

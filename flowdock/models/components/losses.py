@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from beartype.typing import Any, Dict, Literal, Optional, Tuple, Union
 from lightning import LightningModule
-
+import numpy as np
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 from flowdock.utils.frame_utils import cartesian_to_internal, get_frame_matrix
@@ -19,6 +19,8 @@ from flowdock.utils.model_utils import (
     segment_mean,
 )
 
+
+
 MODEL_BATCH = Dict[str, Any]
 MODEL_STAGE = Literal["train", "val", "test", "predict"]
 LOSS_MODES = Literal[
@@ -26,6 +28,31 @@ LOSS_MODES = Literal[
     "auxiliary_estimation",
     "auxiliary_estimation_without_structure_prediction",
 ]
+
+def batch_quadratic_mahalanobis_term(diff, sigma_inv):
+    """
+    Compute the quadratic Mahalanobis distance term for a batch of inputs:
+        -0.5 * (x - mu) @ Sigma^{-1} @ (x - mu).T
+
+    Parameters:
+    x : torch.Tensor of shape (N, d)
+        The batch of data points.
+    mu : torch.Tensor of shape (d,)
+        The mean vector.
+    sigma : torch.Tensor of shape (d, d)
+        The covariance matrix.
+    
+    Returns:
+    torch.Tensor of shape (N,)
+        The quadratic term values for each sample in the batch.
+    """
+    # sigma_inv = torch.inverse(sigma)  # Compute inverse of covariance matrix
+    # diff = x - mu  # Shape: (N, d)
+    
+    # Compute Mahalanobis term efficiently
+    mahalanobis_term = -0.5 * torch.einsum('nd,dd,nd->n', diff, sigma_inv, diff)
+    
+    return mahalanobis_term
 
 
 def compute_contact_prediction_losses(
@@ -560,6 +587,9 @@ def compute_lddt_pli(
         lddt = lddt + below_threshold.mul(conserved_mask).sum((1, 2)) / conserved_mask.sum((1, 2))
     return lddt / 4
 
+
+
+
 # MAIN LOSS FUNCTION
 def eval_structure_prediction_losses(
     lit_module: LightningModule,
@@ -606,7 +636,7 @@ def eval_structure_prediction_losses(
     else:
         use_template = lit_module.hparams.cfg.task.use_template
 
-    lit_module.net.assign_timestep_encodings(batch, t)
+    lit_module.net.assign_timestep_encodings(batch, t) # MUST HAVE
     features = batch["features"]
     indexer = batch["indexer"]
     metadata = batch["metadata"]
@@ -620,6 +650,7 @@ def eval_structure_prediction_losses(
         [("features", "sdf_coordinates"), ("features", "input_ligand_coords")],
     )
     batch = lit_module.net.prepare_protein_patch_indexers(batch)
+    
     if not batch["misc"]["protein_only"]:
         max(metadata["num_i_per_sample"]) #### ?
 
@@ -652,6 +683,8 @@ def eval_structure_prediction_losses(
             iter_id = random.randint(0, num_cont_to_sample)  # nosec
         else:
             iter_id = num_cont_to_sample
+            
+        # Here forward
         batch = lit_module.forward(
             batch, contact_prediction=False, score=False, use_template=use_template
         )
@@ -758,18 +791,18 @@ def eval_structure_prediction_losses(
         ##### SUHI: Important parts
         coords_pred_prot = scores["final_coords_prot_atom_padded"][res_atom_mask].view(
             batch_size, -1, 3
-        )
+        ) # tensor[1, 2019, 3]
         coords_ref_prot = batch["features"]["res_atom_positions"][res_atom_mask].view(
             batch_size, -1, 3
-        )
+        ) # zero centered
         coords_pred_bs_prot = scores["final_coords_prot_atom_padded"][
             res_atom_mask & batch["features"]["binding_site_mask_clean"][:, None]
         ].view(batch_size, -1, 3)
         coords_ref_bs_prot = batch["features"]["res_atom_positions"][
             res_atom_mask & batch["features"]["binding_site_mask_clean"][:, None]
         ].view(batch_size, -1, 3)
-        coords_pred_lig = scores["final_coords_lig_atom"].view(batch_size, -1, 3)
-        coords_ref_lig = batch["features"]["sdf_coordinates"].view(batch_size, -1, 3)
+        coords_pred_lig = scores["final_coords_lig_atom"].view(batch_size, -1, 3) # 1, 31, 3
+        coords_ref_lig = batch["features"]["sdf_coordinates"].view(batch_size, -1, 3) # 1, 31, 3
         coords_pred = torch.cat([coords_pred_prot, coords_pred_lig], dim=1)
         coords_ref = torch.cat([coords_ref_prot, coords_ref_lig], dim=1)
         coords_pred_bs = torch.cat([coords_pred_bs_prot, coords_pred_lig], dim=1)
@@ -1437,6 +1470,201 @@ def eval_auxiliary_estimation_losses(
     plddt_loss = conf_loss * lit_module.hparams.cfg.task.plddt_loss_weight
     affinity_loss = aff_loss * lit_module.hparams.cfg.task.affinity_loss_weight
     batch["outputs"]["loss"] = plddt_loss + affinity_loss
+    if not torch.is_tensor(batch["outputs"]["loss"]) and batch["outputs"]["loss"] == 0:
+        batch["outputs"]["loss"] = None
+    return batch
+
+
+def simple_structure_loss(
+    lit_module: LightningModule,
+    batch: MODEL_BATCH,
+    batch_idx: int,
+    device: Union[str, torch.device],
+    stage: MODEL_STAGE,
+    t_1: float = 1.0,
+    use_gt: bool = True,
+    temperature: float = 1.0,
+) -> MODEL_BATCH:
+    
+    assert 0 <= t_1 <= 1, "`t_1` must be in the range `[0, 1]`."
+    batch_size = batch["metadata"]["num_structid"]
+    
+    assert batch_size == 1, "Batch size must be 1 for simple structure loss."
+
+    if "num_molid" in batch["metadata"].keys() and batch["metadata"]["num_molid"] > 0:
+        batch["misc"]["protein_only"] = False
+    else:
+        batch["misc"]["protein_only"] = True
+
+
+    # Sample the timestep for each structure
+    ttt = torch.rand((batch_size, 1), device=device)
+
+    prior_training = int(random.randint(0, 10) == 1)  # nosec
+    if prior_training == 1:
+        ttt = torch.full_like(ttt, t_1)
+
+    if lit_module.training and lit_module.hparams.cfg.task.use_template:
+        use_template = bool(random.randint(0, 1))  # nosec
+    else:
+        use_template = lit_module.hparams.cfg.task.use_template
+
+    lit_module.net.assign_timestep_encodings(batch, ttt) # MUST HAVE
+    features = batch["features"]
+    indexer = batch["indexer"] # apo_gather_idx_a_chainid - 0000 1111
+    metadata = batch["metadata"]
+    sequence_data = batch['misc']["apo_sequence_data"]
+    
+    sequence_dict = {}
+    for iii, eles in enumerate(sequence_data):
+        ele = eles[1]
+        if ele not in sequence_dict.keys():
+            sequence_dict[ele] = [iii]
+        else:
+            sequence_dict[ele].append(iii)
+            
+    categories = list(sequence_dict.keys())
+    probs = [1.0] * len(categories)
+    probs = [ele/sum(probs) for ele in probs]
+    
+    mol_dict = {}
+    num_mol = metadata["num_molid"]
+    for i in range(num_mol):
+        ele = random.choices(categories, weights=probs, k=1)[0] # random category PQITLWKRPLVTIKIGGQLKEALLDTGADDTVIEEMSLPGRWEPKMIGGIGGFIKVRQYDQIIIEIAGHKAIGTVLVGPTPVNIIGRNLLTQIGATLNF
+        best_dist = 1000000
+        for index in sequence_dict[ele]: # [0, 1]
+            apo_sequence_coord_index = features["apo_res_atom_positions"][indexer["apo_gather_idx_a_chainid"] == index] # 99 x 37 x 3
+            apo_sequence_c_alpha = apo_sequence_coord_index[:, 1, :] # 99 x 3
+            
+            mean_apo_sequence_coord = apo_sequence_c_alpha.mean(dim=0) # 3
+            
+            # lig_bid = indexer["gather_idx_i_molid"]
+            if use_gt:
+                mol_i_coords = features["sdf_coordinates"][indexer["gather_idx_i_molid"] == i]
+                dist = torch.norm(mol_i_coords - mean_apo_sequence_coord, dim=1).mean().item()
+            else:
+                dist = np.random.rand()
+            if dist < best_dist:
+                best_dist = dist
+                mol_dict[i] = index
+                
+        # sequence_dict[ele].remove(mol_dict[i])
+        # probs = [len(sequence_dict[ele]) for ele in categories]
+        # if sum(probs) > 0:
+        #     probs = [ele/sum(probs) for ele in probs]
+
+    forward_lat_converter = lit_module.net.resolve_latent_converter(
+        [
+            ("features", "res_atom_positions"),
+            ("features", "input_protein_coords"),
+        ],
+        [("features", "sdf_coordinates"), ("features", "input_ligand_coords")],
+    )
+    batch = lit_module.net.prepare_protein_patch_indexers(batch)
+    
+    # Evaluate the contact map
+    ref_dist_mat, contact_logit_matrix = eval_true_contact_maps(
+        batch, lit_module.net.CONTACT_SCALE
+    )
+    num_cont_to_sample = max(metadata["num_I_per_sample"])
+    sampled_block_contacts = [
+        None,
+    ]
+    # Onehot contact code sampling
+    with torch.no_grad():
+        for _ in range(num_cont_to_sample):
+            sampled_block_contacts.append(
+                sample_reslig_contact_matrix(
+                    batch, contact_logit_matrix, last=sampled_block_contacts[-1]
+                )
+            )
+    forward_lat_converter.lig_res_anchor_mask = sample_res_rowmask_from_contacts(
+        batch,
+        contact_logit_matrix,
+        lit_module.hparams.cfg.task.single_protein_batch,
+    )
+    with torch.no_grad():
+        batch = lit_module.net.forward_interp_plcomplex_latinp(
+            batch, ttt[:, :, None], forward_lat_converter, mol_dict=mol_dict
+        )
+    if prior_training == 1:
+        iter_id = random.randint(0, num_cont_to_sample)  # nosec
+    else:
+        iter_id = num_cont_to_sample
+    
+    # SUHI: If we breakpoint here, we can extract x_t out of batch: 'input_ligand_coords'
+    noisy_ligand = batch["features"]["input_ligand_coords"].view(-1, 3).clone()
+    
+    all_perms = features["all_perms"].long()  # num_nodes x num_perms
+    n_perms = metadata['num_perms']
+    
+    coords_ref_lig = batch["features"]["sdf_coordinates"].view(-1, 3)
+    all_combinations = coords_ref_lig[all_perms.t()]  # num_perms x num_nodes x 3
+    
+    # now we flatten them
+    all_combinations = all_combinations.reshape(n_perms, -1)  # num_perms x num_nodes x 3
+    noisy_ligand = noisy_ligand.reshape(1, -1)  # 1 x num_nodes x 3
+    
+    t_value = ttt.item()
+    diff_to_all = (1 - t_value) * all_combinations - noisy_ligand # num_perms x d
+    dist_to_all = torch.norm(diff_to_all, dim=-1)  # num_perms x 1
+    logit = - 0.5 * dist_to_all ** 2 / t_value ** 2
+    prob = torch.softmax(logit / temperature, dim=0).reshape(-1, 1)
+    target_lig = (all_combinations * prob).sum(dim=0).reshape(-1)  # num_nodes x 3
+    
+    # Here forward
+    batch = lit_module.forward(batch, contact_prediction=False, score=False, use_template=use_template)
+    batch = lit_module.net.run_contact_map_stack(
+            batch,
+            iter_id=iter_id,
+            observed_block_contacts=sampled_block_contacts[iter_id],
+        )
+    res_atom_mask = features["res_atom_mask"].bool()
+    
+    # now we have the score!
+    scores = lit_module.net.run_score_head(batch, embedding_iter_id=iter_id)
+    
+    coords_pred_prot = scores["final_coords_prot_atom_padded"][res_atom_mask].view(batch_size, -1, 3)
+    coords_ref_prot = batch["features"]["res_atom_positions"][res_atom_mask].view(batch_size, -1, 3)
+    coords_pred_lig = scores["final_coords_lig_atom"].reshape(-1)
+    
+    protein_loss = (coords_pred_prot - coords_ref_prot).pow(2).mean()
+    # naive ligand loss
+    ligand_loss = (coords_pred_lig - target_lig).pow(2).mean()
+    
+    if ligand_loss > 2:
+        print(coords_pred_lig.norm(), target_lig.norm(), t_value)
+        ligand_loss = ligand_loss / ligand_loss.detach()
+
+    if protein_loss > 2:
+        print(coords_pred_prot.norm(), coords_ref_prot.norm(), t_value)
+        protein_loss = protein_loss / protein_loss.detach()
+    
+    loss = protein_loss + ligand_loss
+    
+    lit_module.log(
+        f"{stage}/protein_loss",
+        protein_loss.detach(),
+        on_epoch=True,
+        batch_size=batch_size,
+    )
+    
+    lit_module.log(
+        f"{stage}/ligand_loss",
+        ligand_loss.detach(),
+        on_epoch=True,
+        batch_size=batch_size,
+    )
+    
+    lit_module.log(
+        f"{stage}/loss",
+        loss.detach(),
+        on_epoch=True,
+        batch_size=batch_size,
+        sync_dist=(stage != "train"),
+    )
+    
+    batch["outputs"]["loss"] = loss
     if not torch.is_tensor(batch["outputs"]["loss"]) and batch["outputs"]["loss"] == 0:
         batch["outputs"]["loss"] = None
     return batch

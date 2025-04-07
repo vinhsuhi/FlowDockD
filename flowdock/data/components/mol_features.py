@@ -693,7 +693,7 @@ def attach_pair_idx_and_encodings(feature_set, max_n_frames=None, lazy_eval=Fals
     atom_pair_feature_mat[
         feature_set["indexer"]["gather_idx_ij_i"],
         feature_set["indexer"]["gather_idx_ij_j"],
-    ] = feature_set["features"]["bond_encodings"]
+    ] = feature_set["features"]["bond_encodings"] # what should we replace bond_encodings?
     atom_pair_feature_mat = np.concatenate(
         [atom_pair_feature_mat, (sum_pair_path_dist > 0).astype(np.float_)], axis=2
     )
@@ -749,7 +749,7 @@ def attach_pair_idx_and_encodings(feature_set, max_n_frames=None, lazy_eval=Fals
             "atom_pair_encodings": atom_pair_feature_mat[uv_adj_mat],
             "atom_frame_pair_encodings": atom_frame_pair_feat_initial_,
         }
-    )
+    ) # need to update
     feature_set["metadata"]["num_v"] = num_atoms
     feature_set["metadata"]["num_I"] = num_key_frames
     feature_set["metadata"]["num_U"] = num_key_frames
@@ -807,6 +807,7 @@ def collate_samples(list_of_samples: list, exclude=[]):
             batch_metadata[key] = sum(batch_metadata[f"{key}_per_sample"])
 
     batch_indexer = dict()
+    # nó cứ cộng vào thôi. Hê hê. 
     for indexer_name in list_of_samples[0]["indexer"].keys():
         indexer_name_parts = indexer_name.split("_")
         batch_indexer[indexer_name] = collate_idx_tensors(
@@ -816,11 +817,26 @@ def collate_samples(list_of_samples: list, exclude=[]):
 
     batch_features = dict()
     for feature_name in list_of_samples[0]["features"].keys():
+        
+        if feature_name == "all_perms":
+            # max_num_perms = max(sample["features"]["all_perms"].shape[1] for sample in list_of_samples)
+            # batch_features["all_perms"] = torch.zeros(batch_metadata["num_i"], max_num_perms, dtype=torch.long) - 1
+            # current_max_node_idx = 0
+            # for sample in list_of_samples:
+            #     this_all_perms = sample["features"]["all_perms"] + current_max_node_idx
+            #     batch_features["all_perms"][current_max_node_idx:current_max_node_idx+sample["metadata"]["num_i"], :sample["features"]["all_perms"].shape[1]] = this_all_perms
+            #     current_max_node_idx += sample["metadata"]["num_i"]
+
+            batch_features["all_perms"] = list_of_samples[0]["features"]["all_perms"]
+            continue
+        
         if feature_name in exclude:
             continue
         batch_features[feature_name] = torch.cat(
             iterable_query("features", feature_name, list_of_samples), dim=0
         ).float()
+        
+        
     ret_batch = {
         "metadata": batch_metadata,
         "indexer": batch_indexer,
@@ -838,6 +854,7 @@ def collate_samples(list_of_samples: list, exclude=[]):
             ret_batch["labels"][label_name] = torch.stack(
                 iterable_query("labels", label_name, list_of_samples), dim=0
             ).float()
+            
     return ret_batch
 
 

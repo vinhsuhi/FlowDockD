@@ -147,6 +147,7 @@ class CombinedDataModule(LightningDataModule):
                 a2h_max_ligand_length=self.hparams.pdbbind_a2h_max_ligand_length,
                 binding_affinity_values_dict=self.pdbbind_binding_affinity_values_dict,
                 n_lig_patches=self.hparams.n_lig_patches,
+                overfit_example_name=self.hparams.overfitting_example_name,
             )
             pdbbind_val = PDBBindDataset(
                 root=self.hparams.pdbbind_dir,

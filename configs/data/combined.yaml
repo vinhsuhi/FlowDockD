@@ -3,8 +3,10 @@ data_dir: ${paths.data_dir}
 train_datasets: ["pdbbind", "moad"] # NOTE: must be any non-empty combination of `("pdbbind", "moad", "pdbsidechain")`
 test_datasets: ["pdbbind", "moad"] # NOTE: must be any non-empty combination of `("pdbbind", "moad")`
 batch_size: 24 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
-num_workers: 4
-pin_memory: True
+num_workers: 8
+persistent_workers: True
+timeout: 30 
+pin_memory: False
 # overfitting arguments
 overfitting_example_name: null # NOTE: if specified, only this example will be used during model overfitting
 # model arguments

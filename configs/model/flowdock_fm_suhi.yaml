@@ -96,8 +96,10 @@ cfg:
 
   latent_model: default
   prior_type: esmfold # NOTE: must be a value in (`gaussian`, `harmonic`, `esmfold`)
-  simplify: false
-  
+  simplify: true
+  temperature: 1.0
+
+
   task:
     pretrained: null
     ligands: true

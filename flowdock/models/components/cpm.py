@@ -480,7 +480,6 @@ class BindingFormer(ProtFormer):
 
         if not batch["misc"]["protein_only"]:
             n_ligand_patches = max(metadata["num_I_per_sample"])
-            max(metadata["num_molid_per_sample"])
             lig_frame_rep = features[f"lig_trp_attr{in_attr_suffix}"]
             UI_grid_attr = features["lig_af_grid_attr_projected"]
             IJ_grid_attr = (UI_grid_attr + UI_grid_attr.transpose(1, 2)) / 2

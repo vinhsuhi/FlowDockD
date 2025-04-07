@@ -15,8 +15,8 @@ class LatentCoordinateConverter:
         """Initialize the converter."""
         super().__init__()
         self.config = config
-        self.prot_namemap = prot_atom37_namemap
-        self.lig_namemap = lig_namemap
+        self.prot_namemap = prot_atom37_namemap # e.g. [('features', 'res_atom_positions'), ('features', 'input_protein_coords')]
+        self.lig_namemap = lig_namemap # e.g. [('features', 'sdf_coordinates'), ('features', 'input_ligand_coords')]
         self.cached_noise = None
         self._last_pred_ca_trace = None
 

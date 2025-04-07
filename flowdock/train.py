@@ -139,6 +139,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         log.info("Logging hyperparameters!")
         log_hyperparameters(object_dict)
 
+
     if cfg.get("train"):
         log.info("Starting training!")
         ckpt_path = None
@@ -149,12 +150,19 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
                 "`ckpt_path` was given, but the path does not exist. Training with new model weights."
             )
         if ckpt_path is None:
-            # check if we have pre-trained weights
+            # Check if we have pre-trained weights
             if cfg.model.get("pretrain_path"):
                 pretrained_path = cfg.model.get("pretrain_path")
                 log.info("Loading pre-trained weights!")
-                model.load_state_dict(torch.load(pretrained_path))
+                
+                checkpoint = torch.load(pretrained_path, map_location="cpu")  # Load full checkpoint
+                if "state_dict" in checkpoint:
+                    model.load_state_dict(checkpoint["state_dict"])  # Extract only model weights
+                else:
+                    model.load_state_dict(checkpoint)  # In case it's just a raw state_dict
+        
         trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
+
 
     train_metrics = trainer.callback_metrics
 

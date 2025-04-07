@@ -8,6 +8,12 @@ import pickle  # nosec
 import random
 from multiprocessing import Pool
 from pathlib import Path
+import pynauty
+from collections import deque
+import networkx as nx 
+from collections import defaultdict
+from sympy.combinatorics import Permutation, PermutationGroup
+
 
 import numpy as np
 import pandas as pd
@@ -19,6 +25,7 @@ from rdkit import Chem
 from scipy.spatial import distance
 from torch_geometric.data import Dataset
 from tqdm import tqdm
+from rdkit.Chem import AddHs, MolFromSmiles, RemoveAllHs, RemoveHs
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -30,6 +37,7 @@ from flowdock.utils.data_utils import (
     merge_protein_and_ligands,
     pdb_filepath_to_protein,
     process_protein,
+    align_apo_to_holo,
 )
 from flowdock.utils.model_utils import sample_inplace_to_torch
 from flowdock.utils.utils import fasta_to_dict, read_strings_from_txt
@@ -90,6 +98,7 @@ class BindingMOADDataset(Dataset):
         a2h_max_ligand_length=None,
         binding_affinity_values_dict=None,
         n_lig_patches=32,
+        overfit_example_name=None,
     ):
         """Initializes the BindingMOADDataset."""
         if dockgen_a2h_assessment_csv_filepath is not None:
@@ -227,7 +236,7 @@ class BindingMOADDataset(Dataset):
             f"Removed {tot_before - len(self.ligands)} ligands with no receptor out of {tot_before}"
         )
 
-        if remove_pdbbind:
+        if remove_pdbbind: # False
             assert (
                 pdbbind_split_train is not None and pdbbind_split_val is not None
             ), "PDBBind splits must be provided"
@@ -304,28 +313,6 @@ class BindingMOADDataset(Dataset):
             a2h_assessment_df["Ligand_Total_Num_Atoms"] = np.array(
                 [np.array(num_atoms).sum() for num_atoms in ligand_num_atoms]
             )
-            # import matplotlib.pyplot as plt
-            # import seaborn as sns
-            # plot_dir = Path(a2h_assessment_csv_filepath).parent / "plots"
-            # plot_dir.mkdir(exist_ok=True)
-            # plt.clf()
-            # sns.histplot(a2h_assessment_df["TM-score"])
-            # plt.title("Apo-To-Holo Protein TM-score")
-            # plt.savefig(plot_dir / "a2h_TM-score_hist.png")
-            # plt.clf()
-            # sns.histplot(a2h_assessment_df["RMSD"])
-            # plt.title("Apo-To-Holo Protein RMSD")
-            # plt.savefig(plot_dir / "a2h_RMSD_hist.png")
-            # plt.clf()
-            # plt.xlim(0, 1500)
-            # sns.histplot(a2h_assessment_df["Apo_Length"])
-            # plt.title("Apo Protein Length")
-            # plt.savefig(plot_dir / "apo_length_hist.png")
-            # plt.clf()
-            # plt.xlim(0, 500)
-            # sns.histplot(a2h_assessment_df["Ligand_Total_Num_Atoms"])
-            # plt.title("Ligand Total Number of Atoms")
-            # plt.savefig(plot_dir / "ligand_total_num_atoms_hist.png")
             if filter_using_a2h_assessment and not is_test_dataset:
                 log.info(
                     f"Filtering the Binding MOAD {self.split} dataset based on its apo-to-holo (a2h) structural assessment"
@@ -375,28 +362,6 @@ class BindingMOADDataset(Dataset):
             dockgen_a2h_assessment_df["Ligand_Total_Num_Atoms"] = np.array(
                 [np.array(num_atoms).sum() for num_atoms in dockgen_ligand_num_atoms]
             )
-            # import matplotlib.pyplot as plt
-            # import seaborn as sns
-            # dockgen_plot_dir = Path(dockgen_a2h_assessment_csv_filepath).parent / "plots"
-            # dockgen_plot_dir.mkdir(exist_ok=True)
-            # plt.clf()
-            # sns.histplot(dockgen_a2h_assessment_df["TM-score"])
-            # plt.title("Apo-To-Holo Protein TM-score")
-            # plt.savefig(dockgen_plot_dir / "a2h_TM-score_hist.png")
-            # plt.clf()
-            # sns.histplot(dockgen_a2h_assessment_df["RMSD"])
-            # plt.title("Apo-To-Holo Protein RMSD")
-            # plt.savefig(dockgen_plot_dir / "a2h_RMSD_hist.png")
-            # plt.clf()
-            # plt.xlim(0, 2000)
-            # sns.histplot(dockgen_a2h_assessment_df["Apo_Length"])
-            # plt.title("Apo Protein Length")
-            # plt.savefig(dockgen_plot_dir / "apo_length_hist.png")
-            # plt.clf()
-            # plt.xlim(0, 150)
-            # sns.histplot(dockgen_a2h_assessment_df["Ligand_Total_Num_Atoms"])
-            # plt.title("Ligand Total Number of Atoms")
-            # plt.savefig(dockgen_plot_dir / "ligand_total_num_atoms_hist.png")
             if filter_using_a2h_assessment and not is_test_dataset:
                 log.info(
                     f"Filtering the DockGen {self.split} dataset based on its apo-to-holo (a2h) structural assessment"
@@ -447,6 +412,9 @@ class BindingMOADDataset(Dataset):
         )
         with open(os.path.join(self.prot_cache_path, f"moad_{self.split}_names.txt"), "w") as f:
             f.write("\n".join(list_names))
+            
+        self.max_perm = 100
+        
 
     def len(self):
         """Returns the number of complexes in the dataset."""
@@ -490,7 +458,7 @@ class BindingMOADDataset(Dataset):
         complex_graph = sample_inplace_to_torch(
             self.get_by_name(ligand_name if self.split != "train" else ligand_name[:6])
         )
-
+        
         if self.binding_affinity_values_dict is not None:
             try:
                 # associate (super)ligands with their binding affinities;
@@ -520,8 +488,65 @@ class BindingMOADDataset(Dataset):
                 [torch.nan for _ in range(complex_graph["metadata"]["num_molid"])],
                 dtype=torch.float32,
             )
+        
+        features = complex_graph["features"]
+        atomic_numbers = complex_graph["features"]["atomic_numbers"].long()
+        num_nodes = len(atomic_numbers)
+        indexer = complex_graph["indexer"]
+        edges_ori = torch.stack((indexer["gather_idx_ij_i"],indexer["gather_idx_ij_j"]))
+        edges = edges_ori[:, edges_ori[0] <= edges_ori[1]]  # de-duplicate edges
+        
+        graph = pynauty.Graph(num_nodes, directed=False)
+        for i in range(edges.shape[1]):
+            graph.connect_vertex(edges[0, i].item(), [edges[1, i].item()])
+        
+        colors = atomic_numbers.clone().tolist()
+        color_groups = defaultdict(set)
+        for node, color in enumerate(colors):
+            color_groups[color].add(node)
+        vertex_colors = list(color_groups.values())
+        graph.set_vertex_coloring(vertex_colors)
+        generators, order, o2, orbits, orbit_no = pynauty.autgrp(graph)
+        generators_sympy = [Permutation(g) for g in generators]
+        aut_group = PermutationGroup(generators_sympy)
+        
+        #num_atoms = complex_graph["metadata"]["num_atoms"]
+        num_atoms = complex_graph["metadata"]["num_i"]
+        # Print all isomorphisms (automorphisms)
+        all_perms = []
+        for perm in aut_group.generate():
+            all_perms.append(perm.array_form)
+        if len(all_perms) == 0:
+            all_perms = [list(range(num_atoms))]
+        
+        if len(all_perms[0]) == 0:
+            all_perms = [list(range(num_atoms))]
+        
+        
+        all_perms = torch.stack([torch.tensor(perm) for perm in all_perms], dim=0).long()
+        num_perms = all_perms.size(0)
+        if num_perms > self.max_perm:
+            # randomly sample max_perm permutations
+            identity = all_perms[0].clone()
+            all_perms = all_perms[torch.randperm(num_perms)]
+            all_perms = all_perms[:self.max_perm]
+            all_perms[0] = identity
+            num_perms = self.max_perm
+        
+        complex_graph["features"]["all_perms"] = all_perms.t()
+        complex_graph["metadata"]["num_perms"] = num_perms
+        # complex_graph["metadata"]["max_perm"] = self.max_perm
+    
+        res_atom_mask = complex_graph["features"]["res_atom_mask"]
+        apo_res_atom_mask = complex_graph["features"]["apo_res_atom_mask"]
+        
+        complex_graph["features"]["res_atom_mask"] = res_atom_mask * apo_res_atom_mask
+        complex_graph["features"]["apo_res_atom_mask"] = res_atom_mask * apo_res_atom_mask
+    
+        centered = centralize_complex_graph(complex_graph)
+        centered = align_apo_to_holo(centered)
+        return centered
 
-        return centralize_complex_graph(complex_graph)
 
     def get_all_complexes(self):
         """Returns all the complexes in the dataset."""

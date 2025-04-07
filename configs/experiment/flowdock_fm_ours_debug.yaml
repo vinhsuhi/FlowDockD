@@ -1,0 +1,58 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=flowdock_fm
+
+defaults:
+  - override /data: combined
+  - override /model: flowdock_fm_suhi
+  - override /callbacks: null
+  - override /trainer: default
+  - override /logger: null
+  - override /paths: default_overfit
+
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+model:
+  optimizer:
+    lr: 5e-5
+  compile: false
+  pretrain_path: /mnt/beegfs/home/ac141281/FlowDockD/checkpoints/esmfold_prior_paper_weights.ckpt
+
+
+tags: ["flowdock_fm_overfit-ours", "combined_dataset_overfit-ours"]
+
+
+seed: 496
+
+trainer:
+  max_epochs: 300
+  check_val_every_n_epoch: 5 # NOTE: we increase this since validation steps involve full model sampling and evaluation
+  reload_dataloaders_every_n_epochs: 1
+  # overfit_batches: 1
+
+data:
+  num_workers: 0 # debuggers don't like multiprocessing
+  batch_size: 1
+  # overfitting_example_name: "1a94"
+  train_datasets: ["moad"]
+  test_datasets: ["moad"]
+
+# logger:
+#   wandb:
+#     name: "FlowDock-FM-Overfit-Ours"
+#     tags: ${tags}
+#     group: "FlowDock-FM"
+#     save_dir: "${paths.output_dir}"
+#     offline: False
+#     id: "suhi_ours01_overfit" # pass correct id to resume experiment!
+#     anonymous: null # enable anonymous logging
+#     project: "FlowDock_FM-Overfit"
+#     log_model: False # upload lightning ckpts
+#     prefix: "" # a string to put at the beginning of metric keys
+#     entity: "yun-ye-lukas-university-of-stuttgart" # set to name of your wandb team
+#     job_type: "training"
+
+

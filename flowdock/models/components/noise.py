@@ -332,7 +332,7 @@ def sample_protein_harmonic_prior(
 
 
 def sample_ligand_harmonic_prior(
-    lig_x0: torch.Tensor, protein_ca_x0: torch.Tensor, batch: MODEL_BATCH, sigma: float = 1.0
+    lig_x0: torch.Tensor, protein_ca_x0: torch.Tensor, batch: MODEL_BATCH, sigma: float = 1.0, mol_dict = None
 ) -> torch.Tensor:
     """
     Sample ligand noise from a harmonic prior distribution.
@@ -343,38 +343,38 @@ def sample_ligand_harmonic_prior(
     :param batch: A batch dictionary
     :param sigma: standard deviation of the harmonic noise
     :return: tensor of harmonic noise
+    
+    apo_sequence_coord_index = features["apo_res_atom_positions"][indexer["apo_gather_idx_a_chainid"] == index] # 99 x 37 x 3
+    apo_res_atom_mask_index = features["apo_res_atom_mask"][indexer["apo_gather_idx_a_chainid"] == index] # 99 x 37
+    
+    flat_apo_sequence_coord_index = apo_sequence_coord_index.view(-1, 3) # 99 x 37 x 3 -> 99*37 x 3
+    flat_apo_res_atom_mask_index = apo_res_atom_mask_index.reshape(-1, 1) # 99 x 37 -> 99*37
+    mean_apo_sequence_coord = flat_apo_res_atom_mask_index * flat_apo_sequence_coord_index # 99*37 x 3
+    mean_apo_sequence_coord = torch.mean(mean_apo_sequence_coord, dim=0) # 3
+    
+    
     """
+    
+    # only allow batchsize 1
+    assert protein_ca_x0.size(0) == 1, "Only batch size of 1 is supported for ligand sampling"
+    
     indexer = batch["indexer"]
     metadata = batch["metadata"]
-    lig_num_nodes = lig_x0.size(0) * lig_x0.size(1)
+    misc = batch["misc"]
+    lig_num_nodes = lig_x0.size(0) * lig_x0.size(1) 
     num_molid_per_sample = max(metadata["num_molid_per_sample"])
     # NOTE: here, we distinguish each ligand chain in a complex for harmonic chain sampling
     lig_bid = indexer["gather_idx_i_molid"]
-    protein_sigma = (
-        segment_mean(
-            torch.square(protein_ca_x0).flatten(0, 1),
-            indexer["gather_idx_a_structid"],
-            metadata["num_structid"],
-        ).mean(dim=-1)
-        ** 0.5
-    ).repeat_interleave(num_molid_per_sample)
+    # protein sigma is the size of the protein (it proportionally scales the noise)
+    protein_sigma = (segment_mean(torch.square(protein_ca_x0).flatten(0, 1), indexer["gather_idx_a_structid"],metadata["num_structid"],).mean(dim=-1)** 0.5).repeat_interleave(num_molid_per_sample) # 9.780
+    
     sde = DiffusionSDE(protein_sigma * sigma)
-    edges = torch.stack(
-        (
-            indexer["gather_idx_ij_i"],
-            indexer["gather_idx_ij_j"],
-        )
-    )
+    edges = torch.stack((indexer["gather_idx_ij_i"],indexer["gather_idx_ij_j"]))
     edges = edges[:, edges[0] < edges[1]]  # de-duplicate edges
     ptr = torch.cumsum(torch.bincount(lig_bid), dim=0)
     ptr = torch.cat((torch.tensor([0], device=lig_bid.device), ptr))
     try:
-        D, P = HarmonicSDE.diagonalize(
-            lig_num_nodes,
-            ptr,
-            edges=edges.T,
-            lamb=sde.lamb[lig_bid],
-        )
+        D, P = HarmonicSDE.diagonalize(lig_num_nodes,ptr,edges=edges.T,lamb=sde.lamb[lig_bid])
     except Exception as e:
         log.error(
             f"Failed to call HarmonicSDE.diagonalize() for ligand(s) {metadata['sample_ID_per_sample']} due to: {e}"
@@ -382,6 +382,15 @@ def sample_ligand_harmonic_prior(
         raise e
     noise = torch.randn((lig_num_nodes, 3), device=lig_x0.device)
     prior = P @ (noise / torch.sqrt(D)[:, None])
+    
+    # here we shift the mean of the ligand noise to the mean of the protein Ca atoms
+    # create a list of chain coords
+    if mol_dict is not None:
+        for key, value in mol_dict.items():
+            # how to get the mol_coords from prior?
+            c_alpha_coords = protein_ca_x0.squeeze()[indexer["apo_gather_idx_a_chainid"] == value]
+            prior[indexer["gather_idx_i_molid"] == key] += c_alpha_coords.mean(dim=0) 
+    
     return prior.view(lig_x0.size()).contiguous()
 
 
@@ -429,7 +438,7 @@ def sample_complex_harmonic_prior(
 
 
 def sample_esmfold_prior(
-    x0: torch.Tensor, x1: torch.Tensor, sigma: float, x0_sigma: float = 1e-4
+    x0: torch.Tensor, x1: torch.Tensor, sigma: float, x0_sigma: float = 1e-4,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Sample noise from an ESMFold prior distribution.
 

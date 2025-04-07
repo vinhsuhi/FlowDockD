@@ -26,6 +26,9 @@ from openfold.utils import tensor_utils
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Geometry import Point3D
+from pytorch3d.ops import corresponding_points_alignment
+from flowdock.utils.frame_utils import apply_similarity_transform
+
 
 from flowdock.data.components.process_mols import read_molecule
 
@@ -1594,6 +1597,46 @@ def centralize_complex_graph(complex_graph: Dict[str, Any]) -> Dict[str, Any]:
         ]
     return complex_graph
 
+
+
+def centralize_complex_graph_numpy(complex_graph: Dict[str, Any]) -> Dict[str, Any]:
+    """Centralize the protein and ligand coordinates in the complex graph.
+
+    Note that the holo protein and ligand coordinates are centralized using the holo protein Ca
+    atoms' centroid coordinates, whereas the apo protein coordinates are instead centralized using
+    the apo Ca atoms' centroid coordinates. Afterwards, both versions of the protein coordinates
+    are aligned at the origin.
+
+    :param complex_graph: A complex graph dictionary.
+    :return: Centralized complex graph dictionary.
+    """
+    ca_atom_centroid_coords = complex_graph["features"]["res_atom_positions"][:, 1].mean(
+        axis=0, keepdims=True
+    )
+    complex_graph["features"]["res_atom_positions"] -= ca_atom_centroid_coords[:, None, :]
+    complex_graph["features"]["sdf_coordinates"] -= ca_atom_centroid_coords
+    if "apo_res_atom_positions" in complex_graph["features"]:
+        apo_ca_atom_centroid_coords = complex_graph["features"]["apo_res_atom_positions"][:, 1].mean(
+            axis=0, keepdims=True
+        )
+        complex_graph["features"]["apo_res_atom_positions"] -= apo_ca_atom_centroid_coords[:, None, :]
+    
+    return complex_graph
+
+
+def align_apo_to_holo(complex_graph: Dict[str, Any]) -> Dict[str, Any]:
+    """Align the apo protein to the holo protein using the Kabsch algorithm.
+
+    :param complex_graph: A complex graph dictionary.
+    :return: Aligned complex graph dictionary.
+    """
+    
+    apo_ca_atom_positions = complex_graph["features"]["apo_res_atom_positions"][:, 1].reshape(1, -1, 3)
+    holo_ca_atom_positions = complex_graph["features"]["res_atom_positions"][:, 1].reshape(1, -1, 3)
+    similarity_transform = corresponding_points_alignment(apo_ca_atom_positions, holo_ca_atom_positions, weights=None, estimate_scale=False)
+    aligned_apo_res_atom_positions = apply_similarity_transform(apo_ca_atom_positions, *similarity_transform)
+    complex_graph["features"]["apo_res_atom_positions"][:, 1] = aligned_apo_res_atom_positions.reshape(-1, 3)
+    return complex_graph
 
 @beartype
 def convert_to_molar(

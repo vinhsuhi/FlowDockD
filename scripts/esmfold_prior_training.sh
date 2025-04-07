@@ -33,7 +33,7 @@ srun python3 flowdock/train.py \
     trainer=ddp \
     trainer.devices=8 \
     trainer.num_nodes=1 \
-    ckpt_path="/mnt/beegfs/home/ac141281/FlowDockD/logs/train/runs/2025-02-22_16-23-42/checkpoints/last.ckpt"
+    ckpt_path="/mnt/beegfs/home/ac141281/FlowDockD/logs/train/runs/2025-02-27_09-38-28/checkpoints/last.ckpt"
 
 echo "Finished calling flowdock/train.py!"
 

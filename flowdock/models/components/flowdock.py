@@ -9,6 +9,7 @@ import tqdm
 from beartype.typing import Any, Callable, Dict, Literal, Optional, Tuple, Union
 from omegaconf import DictConfig
 from pytorch3d.ops import corresponding_points_alignment
+import numpy as np 
 
 from flowdock.utils.inspect_ode_samplers import clamp_tensor
 
@@ -89,17 +90,56 @@ class FlowDock(torch.nn.Module):
         super().__init__()
         self.cfg = cfg
         self.ligand_cfg = cfg.mol_encoder
+        '''ligand_cfg = mol_encoder
+        {'node_channels': 512, 'pair_channels': 64, 'n_atom_encodings': 23, 'n_bond_encodings': 4, 'n_atom_pos_encodings': 6, 
+        'n_stereo_encodings': 14, 'n_attention_heads': 8, 'attention_head_dim': 8, 'hidden_dim': 2048, 'max_path_integral_length': 6, 
+        'n_transformer_stacks': 8, 'n_heads': 8, 'n_patches': 32, 
+        'checkpoint_file': '/mnt/beegfs/home/ac141281/FlowDockD/checkpoints/neuralplexermodels_downstream_datasets_predictions/models/complex_structure_prediction.ckpt', 
+        'megamolbart': None, 'from_pretrained': True}
+        '''
         self.protein_cfg = cfg.protein_encoder
+        ''' protein_cfg = protein_encoder
+        {'use_esm_embedding': True, 'esm_version': 'esm2_t33_650M_UR50D', 'esm_repr_layer': 33, 'residue_dim': 512, 'plm_embed_dim': 1280, 
+        'n_aa_types': 21, 'atom_padding_dim': 37, 'n_atom_types': 4, 'n_patches': 96, 'n_attention_heads': 8, 'scalar_dim': 16, 'point_dim': 4, 
+        'pair_dim': 64, 'n_heads': 8, 'head_dim': 8, 'max_residue_degree': 32, 'n_encoder_stacks': 2, 'from_pretrained': True}
+        '''
         self.relational_reasoning_cfg = cfg.relational_reasoning
+        '''
+        {'from_pretrained': True}
+        '''
         self.contact_cfg = cfg.contact_predictor
+        '''
+        {'n_stacks': 4, 'dropout': 0.01, 'from_pretrained': True}
+        '''
         self.score_cfg = cfg.score_head
+        '''
+        {'fiber_dim': 64, 'hidden_dim': 512, 'n_stacks': 4, 'max_atom_degree': 8, 'from_pretrained': True}
+        '''
         self.confidence_cfg = cfg.confidence
+        '''
+        {'enabled': True, 'fiber_dim': 64, 'hidden_dim': 512, 'n_stacks': 4, 'from_pretrained': True}
+        '''
         self.affinity_cfg = cfg.affinity
+        '''
+        {'enabled': True, 'fiber_dim': 64, 'hidden_dim': 512, 'n_stacks': 4, 'ligand_pooling': 'sum', 'dropout': 0.01, 'from_pretrained': False}
+        '''
         self.global_cfg = cfg.task
+        '''
+        {'pretrained': None, 'ligands': True, 'epoch_frac': 1.0, 'label_name': None, 'sequence_crop_size': 1600, 'edge_crop_size': 400000, 
+        'max_masking_rate': 0.0, 'n_modes': 8, 'dropout': 0.01, 'freeze_mol_encoder': True, 'freeze_protein_encoder': False, 
+        'freeze_relational_reasoning': False, 'freeze_contact_predictor': True, 'freeze_score_head': False, 'freeze_confidence': True, 
+        'freeze_affinity': False, 'use_template': True, 'use_plddt': False, 'block_contact_decoding_scheme': 'beam', 
+        'frozen_ligand_backbone': False, 'frozen_protein_backbone': False, 'single_protein_batch': True, 'contact_loss_weight': 0.2, 
+        'global_score_loss_weight': 0.2, 'ligand_score_loss_weight': 0.1, 'clash_loss_weight': 10.0, 'local_distgeom_loss_weight': 10.0, 
+        'drmsd_loss_weight': 2.0, 'distogram_loss_weight': 0.05, 'plddt_loss_weight': 1.0, 'affinity_loss_weight': 0.1, 'aux_batch_freq': 10, 
+        'global_max_sigma': 5.0, 'internal_max_sigma': 2.0, 'detect_covalent': True, 'float32_matmul_precision': 'highest', 
+        'constrained_inpainting': False, 'visualize_generated_samples': True, 'loss_mode': 'auxiliary_estimation', 'num_steps': 20, 
+        'sampler': 'VDODE', 'sampler_eta': 1.0, 'start_time': 1.0, 'eval_structure_prediction': False, 'overfitting_example_name': None}
+        '''
         self.protatm_padding_dim = self.protein_cfg.atom_padding_dim  # := 37
-        self.max_n_edges = self.global_cfg.edge_crop_size
-        self.latent_model = cfg.latent_model
-        self.prior_type = cfg.prior_type
+        self.max_n_edges = self.global_cfg.edge_crop_size # := 400000
+        self.latent_model = cfg.latent_model # 'default'
+        self.prior_type = cfg.prior_type # 'esmfold'
 
         # VDW radius mapping, in Angstrom
         self.atnum2vdw = torch.nn.Parameter(
@@ -218,6 +258,7 @@ class FlowDock(torch.nn.Module):
 
         self.freeze_pretraining_params()
 
+    # Does not matter
     def freeze_pretraining_params(self):
         """Freeze pretraining parameters."""
         if self.global_cfg.freeze_mol_encoder: # True
@@ -275,6 +316,8 @@ class FlowDock(torch.nn.Module):
             for p in self.affinity_head.parameters():
                 p.requires_grad = False
 
+
+    # Does not matter
     @staticmethod
     def assign_timestep_encodings(batch: MODEL_BATCH, t_normalized: Union[float, torch.Tensor]):
         """Assign timestep encodings to the batch.
@@ -304,11 +347,12 @@ class FlowDock(torch.nn.Module):
         t_prot = t_normalized[indexer["gather_idx_a_structid"]]
         batch["features"]["timestep_encoding_prot"] = t_prot
 
-        if not batch["misc"]["protein_only"]:
+        if not batch["misc"]["protein_only"]: # True
             batch["features"]["timestep_encoding_lig"] = t_normalized[
                 indexer["gather_idx_i_structid"]
             ]
 
+    # Does not matter
     def resolve_latent_converter(self, *args):
         if self.latent_model == "default":
             return DefaultPLCoordinateConverter(self.global_cfg, *args)
@@ -323,6 +367,7 @@ class FlowDock(torch.nn.Module):
         latent_converter: LatentCoordinateConverter,
         umeyama_correction: bool = True,
         erase_data: bool = False,
+        mol_dict = None,
     ) -> torch.Tensor:
         """Interpolate latent internal coordinates.
 
@@ -368,6 +413,8 @@ class FlowDock(torch.nn.Module):
             ],
             dim=1,
         )
+        
+        
         try:
             assert self.global_cfg.single_protein_batch, "Only single protein batch is supported."
             if self.prior_type == "gaussian":
@@ -381,8 +428,8 @@ class FlowDock(torch.nn.Module):
             elif self.prior_type == "esmfold":
                 # NOTE: the following unnormalization step assumes that `self.latent_model == "default"`
                 apo_lig_lat_ = sample_ligand_harmonic_prior(
-                    lig_lat, apo_ca_lat * latent_converter.ca_scale, batch
-                )
+                    lig_lat, apo_ca_lat * latent_converter.ca_scale, batch, mol_dict=mol_dict
+                ) # non zero
                 x_int_1_ = torch.cat(
                     [
                         apo_ca_lat,  # NOTE: already normalized
@@ -391,6 +438,7 @@ class FlowDock(torch.nn.Module):
                     ],
                     dim=1,
                 )
+                
                 noisy_x_int_0, noisy_x_int_1 = sample_esmfold_prior(
                     x_int_0_, x_int_1_, sigma=1e-4, x0_sigma=1e-4
                 )
@@ -403,7 +451,9 @@ class FlowDock(torch.nn.Module):
             raise e
 
         # NOTE: by this point, both `noisy_x_int_0` and `noisy_x_int_1` are normalized
-        if umeyama_correction and not erase_data:
+        
+        
+        if umeyama_correction and (not erase_data) and (not self.cfg.simplify):
             try:
                 # align the complex structure based solely the optimal Ca atom alignment
                 # NOTE: we do not perform such alignments during the initial (`t=1`) sampling timestep
@@ -423,6 +473,7 @@ class FlowDock(torch.nn.Module):
                     ],
                     dim=1,
                 )[0]
+                
                 similarity_transform = corresponding_points_alignment(
                     X=noisy_x_ca_int_1, Y=noisy_x_ca_int_0, estimate_scale=False
                 )
@@ -484,6 +535,7 @@ class FlowDock(torch.nn.Module):
         latent_converter: LatentCoordinateConverter,
         umeyama_correction: bool = True,
         erase_data: bool = False,
+        mol_dict = None,
     ) -> MODEL_BATCH:
         """Noise-interpolate protein-ligand complex latent internal coordinates.
 
@@ -506,6 +558,7 @@ class FlowDock(torch.nn.Module):
             latent_converter,
             umeyama_correction=umeyama_correction,
             erase_data=erase_data,
+            mol_dict=mol_dict,
         )
         return latent_converter.assign_to_batch(batch, x_int_t)
 
@@ -617,41 +670,8 @@ class FlowDock(torch.nn.Module):
         ]
         batch["metadata"]["num_ab"] = batch["indexer"]["gather_idx_ab_a"].shape[0]
 
-        if self.global_cfg.constrained_inpainting:
-            # Diversified spherical cropping scheme
-            assert self.global_cfg.single_protein_batch, "Only single protein batch is supported."
-            batch_size = metadata["num_structid"]
-            # Assert single ligand samples
-            assert batch_size == metadata["num_molid"], "Invalid number of ligands."
-            ligand_coords = batch["features"]["sdf_coordinates"].reshape(batch_size, -1, 3)
-            ligand_centroids = torch.mean(ligand_coords, dim=1)
-            if kwargs["training"]:
-                # 3A perturbations around the ligand centroid
-                perturbed_centroids = ligand_centroids + torch.rand_like(ligand_centroids) * 1.73
-                site_radius = torch.amax(
-                    torch.norm(ligand_coords - perturbed_centroids[:, None, :], dim=-1),
-                    dim=1,
-                )
-                perturbed_site_radius = (
-                    site_radius + (0.5 + torch.rand_like(site_radius)) * self.BINDING_SITE_CUTOFF
-                )
-            else:
-                perturbed_centroids = ligand_centroids
-                site_radius = torch.amax(
-                    torch.norm(ligand_coords - perturbed_centroids[:, None, :], dim=-1),
-                    dim=1,
-                )
-                perturbed_site_radius = site_radius + self.BINDING_SITE_CUTOFF
-            centroid_ca_dist = (
-                batch["features"]["res_atom_positions"][:, 1].contiguous().view(batch_size, -1, 3)
-                - perturbed_centroids[:, None, :]
-            ).norm(dim=-1)
-            binding_site_mask = (centroid_ca_dist < perturbed_site_radius[:, None]).flatten(0, 1)
-            batch["features"]["binding_site_mask"] = binding_site_mask
-            batch["features"]["template_alignment_mask"] = (~binding_site_mask) & batch[
-                "features"
-            ]["template_alignment_mask"].bool()
-
+        if self.global_cfg.constrained_inpainting: # False
+            raise NotImplementedError("Constrained inpainting is not supported.")
         return batch
 
     def initialize_protein_embeddings(self, batch: MODEL_BATCH):
@@ -868,7 +888,6 @@ class FlowDock(torch.nn.Module):
         :param kwargs: Additional keyword arguments.
         """
         metadata = batch["metadata"]
-        batch["features"]
         indexer = batch["indexer"]
         batch_size = metadata["num_structid"]
 
@@ -943,7 +962,7 @@ class FlowDock(torch.nn.Module):
             return batch
 
         # NOTE: here, we are assuming a static ligand graph
-        if "lig_atom_attr" not in batch["features"]:
+        if "lig_atom_attr" not in batch["features"]: # True
             self.initialize_ligand_embeddings(batch, **kwargs)
         return batch
 
@@ -1460,7 +1479,7 @@ class FlowDock(torch.nn.Module):
             use_template=use_template,
             training=False,
         )
-        if umeyama_correction:
+        if umeyama_correction and (not self.cfg.simplify):
             _last_pred_ca_trace = (
                 batch["outputs"]["denoised_prediction"]["final_coords_prot_atom_padded"][:, 1]
                 .view(batch_size, -1, 3)
@@ -1781,17 +1800,6 @@ class FlowDock(torch.nn.Module):
                     use_template=use_template,
                 )
                 if return_all_states:
-                    # all_frames.append(
-                    #     {
-                    #         "ligands": batch["features"]["input_ligand_coords"],
-                    #         "receptor": batch["features"]["input_protein_coords"][
-                    #             res_atom_mask
-                    #         ],
-                    #         "receptor_padded": batch["features"][
-                    #             "input_protein_coords"
-                    #         ],
-                    #     }
-                    # )
                     all_frames.append(
                         {
                             "ligands": batch["outputs"]["denoised_prediction"][
@@ -1996,31 +2004,18 @@ class FlowDock(torch.nn.Module):
         """
         prepare_batch(batch)
 
-        batch = self.run_encoder_stack(
-            batch,
-            use_template=use_template,
-            use_plddt=self.global_cfg.use_plddt,
-            **kwargs,
-        )
+        batch = self.run_encoder_stack(batch, use_template=use_template, use_plddt=self.global_cfg.use_plddt, **kwargs)
 
-        if contact_prediction:
-            self.run_contact_map_stack(
-                batch,
-                iter_id,
-                observed_block_contacts=observed_block_contacts,
-                **kwargs,
-            )
+        if contact_prediction: # True
+            self.run_contact_map_stack(batch, iter_id, observed_block_contacts=observed_block_contacts, **kwargs)
 
-        if infer_geometry_prior:
-            assert (
-                batch["misc"]["protein_only"] is False
-            ), "Only protein-ligand complexes are supported for a geometry prior."
+        if infer_geometry_prior: # False sometimes it is True, for example, when we do sample_pl_complex_structures
+            assert (batch["misc"]["protein_only"] is False), "Only protein-ligand complexes are supported for a geometry prior."
             self.infer_geometry_prior(batch, **kwargs)
 
-        if score:
-            batch["outputs"]["denoised_prediction"] = self.run_score_head(
-                batch, embedding_iter_id=iter_id, **kwargs
-            )
+        # does not matter
+        if score: # True
+            batch["outputs"]["denoised_prediction"] = self.run_score_head(batch, embedding_iter_id=iter_id, **kwargs)
 
         return batch
 
